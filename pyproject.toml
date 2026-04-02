@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atomic_concept_edits"
+version = "0.1.0"
+description = "A framework for systematic prompt exploration and optimization through atomic concept-level edits."
+readme = "README.md"
+authors = [{name = "Neha Kalibhat", email = "nehamk@google.com"}]
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = [
+    "absl-py",
+    "google-genai",
+    "ml_collections",
+    "nltk",
+    "numpy",
+    "pandas",
+    "sympy",
+    "tenacity",
+]
+
+[project.optional-dependencies]
+openai = ["openai"]
+anthropic = ["anthropic"]
+hf = ["datasets"]
+tfds = ["tensorflow-datasets"]
+all = ["openai", "anthropic", "datasets", "tensorflow-datasets"]
+
+[tool.setuptools]
+packages = ["atomic_concept_edits", "atomic_concept_edits.configs", "atomic_concept_edits.data", "atomic_concept_edits.models", "atomic_concept_edits.util"]
+package-dir = {"atomic_concept_edits" = "."}

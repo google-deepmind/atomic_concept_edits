@@ -1,31 +1,71 @@
-# atomic_concept_edits
+# Atomic Concept Edits (ACE)
 
-TODO(b/494576780): Add a description for your new project, explain what is
-being released here, etc... Additional, the following sections are normally
-expected for all releases. Feel free to add additional sections if appropriate
-for your project.
+ACE is a framework for systematic prompt exploration and optimization through
+atomic concept-level edits. It decomposes prompts into individual concepts
+and generates targeted mutations (add, remove, replace) to explore how small
+changes affect model behavior with respect to a given objective. The framework
+includes:
+
+- **ACE Exploration**: A tree-search algorithm that iteratively
+  mutates prompts, evaluates them against a scorer that measures
+  the objective (generally including a target model and autorater),
+  and expands the most promising branches.
+- **Constitution Optimizer**: An optimization loop that learns a
+  "constitution" (a set of strategies) to guide the mutation
+  process, using a surrogate classifier to predict which edits
+  will satisfy the objective. This constitution uncovers key
+  aspects of the model's behavior with respect to the objective
+  and can then be used to guide the ACE exploration.
 
 ## Installation
 
-Write instructions for how the user should install your code. The instructions
-should ideally be valid when copy-pasted. You can combine this with the Usage
-section if there's no separate installation step.
+The project uses `pyproject.toml` for package configuration.
+To install it in editable mode:
+
+```bash
+python -m venv ace_env
+source ace_env/bin/activate
+pip install -e .
+```
+
+To install with all optional dependencies
+(OpenAI, Anthropic, Hugging Face Datasets, and TensorFlow Datasets):
+
+```bash
+pip install -e ".[all]"
+```
 
 ## Usage
 
-Write example usage of your code. The instructions should ideally be valid when
-copy-pasted, and will be used by your technical reviewer to verify that your
-package functions correctly.
+### ACE Exploration
+
+Simple demo: ace_word_count_demo.ipynb
+
+You can run ACE exploration with a config file:
+
+```bash
+python run_ace_exploration.py --config=configs/word_count.py
+```
+
+### Constitution Optimizer
+
+After running an exploration, you can optimize a constitution:
+
+```bash
+python run_constitution_optimizer.py --exploration_output_dir='<path_to_exploration_output_dir>'
+```
 
 ## Citing this work
 
-Add citation details here, usually a pastable BibTeX snippet:
-
 ```
-@article{publicationname,
-      title={Publication Name},
-      author={Author One and Author Two and Author Three},
+@article{kalibhat2026interpretingcontrollingmodelbehavior,
+      title={Interpreting and Controlling Model Behavior via Constitutions for Atomic Concept Edits},
+      author={Neha Kalibhat and Zi Wang and Prasoon Bajpai and Drew Proud and Wenjun Zeng and Been Kim and Mani Malek},
       year={2026},
+      eprint={2602.00092},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2602.00092},
 }
 ```
 

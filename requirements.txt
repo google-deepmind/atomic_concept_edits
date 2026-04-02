@@ -1,0 +1,9 @@
+absl-py
+datasets
+google-genai
+ml_collections
+nltk
+numpy
+pandas
+sympy
+tenacity
