@@ -34,7 +34,10 @@ def run_in_parallel(
   Returns:
     A list of results, one for each invocation, in the same order.
   """
-  with futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
+  if not list_of_kwargs:
+    return []
+  
+  with futures.ThreadPoolExecutor(max_workers=max(1, num_workers)) as executor:
     future_list = [
         executor.submit(function, **kwargs) for kwargs in list_of_kwargs
     ]

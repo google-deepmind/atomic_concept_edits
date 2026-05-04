@@ -14,3 +14,22 @@
 # ==============================================================================
 
 """Data loading for ACE."""
+
+from .config import DatasetConfig
+from .custom import load_custom_dataset
+from .huggingface import load_lima_prompts
+from .math import load_math_problems
+from .tfds import load_coco_captions
+
+class DatasetFactory:
+  def __call__(self, config: DatasetConfig) -> list[str]:
+    if config.dataset_name == 'lima':
+      return load_lima_prompts(config.num_prompts, config.split)
+    elif config.dataset_name == 'custom':
+      return load_custom_dataset(config.prompt_list, config.num_prompts)
+    elif config.dataset_name == 'math':
+      return load_math_problems(config.num_prompts, config.split, config.data_path)
+    elif config.dataset_name == 'coco_captions':
+      return load_coco_captions(config.num_prompts, config.split)
+    else:
+      return ["Write a short paragraph about a dog."]
