@@ -474,6 +474,12 @@ Respond only with the updated constitution, nothing else. No other text or chain
         all_test_losses,
     ) = self.load_checkpoint()
 
+    if not train_data_with_results:
+      print("\n🏆 AMAZING RESULT: The model perfectly satisfied the objective!")
+      print("There are no failed examples for the Constitution Optimizer to learn from.")
+      print("Optimization is not needed. Bypassing optimizer...\n")
+      return latest_constitution or self.config.initial_constitution or "No constitution needed; initial prompts were perfect."
+
     best_val_loss = MAX_LOSS
     if all_val_losses:
       best_val_loss = min(all_val_losses)
