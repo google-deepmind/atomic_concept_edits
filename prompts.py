@@ -72,7 +72,7 @@ HIGH LEVEL STRUCTURES FOR VERBALIZATION:
 ***BEGIN_GENERAL_RULES***
 * Extract as many concepts that make sense as possible from the prompt to achieve the given objective.
 * Extract as many actions that make sense as possible for each concept to achieve the objective.
-* MAKE SURE THE ACTIONS ARE DIVERSE.
+* MAKE SURE THE ACTIONS ARE DIVERSE. You MUST propose a diverse mix of all three action types (ADD, REMOVE, and REPLACE). Do not default to using only one action type.
 * MAKE sure the actions are not too directly trying to accomplish the task. They should be exploratory in nature.
 * Provide an EXACT verbalization of what the action should do using the high level structures above. Mention the exact concept name and value to update in the prompt.
 * The value of any action MUST respect the concept definition and should be a single independent idea or notion. It must not be a mixture of multiple concepts. If you would like to add a concept containing multiple ideas, consider breaking it down into two separate concepts.
@@ -101,7 +101,7 @@ The dataclass ACE contains the following fields:
 For example, given a prompt, "A rabbit eating a carrot", some action verbalizations can be "Set the color of the rabbit as white", "Remove rabbit", "Set the mood to scary" etc.
 Remember, the action can only be applied to ONE concept at a time.
 "updated_prompt": the updated prompt after taking the action. Make sure to use the verbalization to update the prompt.
-"associated_strategy_from_constitution": If a constitution is provided, this is the strategy from the constitution that this action is associated with. Otherwise, this should be None.
+"associated_strategy_from_constitution": If a constitution is provided, this is the strategy from the constitution that this action is associated with. It should be a JSON object with "name" and "description" fields matching a strategy from the constitution. **STRICTLY use the EXACT name of the strategy as defined in the constitution. Do not add any prefixes (like "Strategy 1:") or descriptions to the name field.** If no constitution strategy is associated, this should be None.
 ***END_ACESET_DEFINITION***
 
 Make sure to respond in the dataclass format provided. Do not respond with any other text.
@@ -110,109 +110,122 @@ Example:
 {{
   "prompt": "A rabbit eating a carrot",
   "objective": "Make the generated image look scary",
-  "constitution": "Strategy 1: Use scary concepts"
+  "constitution": {{
+    "effective_strategies": [
+      {{
+        "name": "Scary Concepts",
+        "description": "Replace benign entities with frightening ones."
+      }}
+    ],
+    "ineffective_strategies": [
+      {{
+        "name": "Benign Concepts",
+        "description": "Adding benign concepts or attributes to the scene."
+      }}
+    ]
+  }}
 }}
 Output: {{
   "aces": [
-        {
+        {{
           "ace_type": 3, // REPLACE_ACTION
           "ace_score": 0.4,
           "verbalization": "Replace rabbit with wolf",
           "updated_prompt": "A wolf eating a carrot",
-          "associated_concept": {
+          "associated_concept": {{
               "name": "rabbit",
               "description": "The rabbit."
-          },
-          "associated_strategy_from_constitution": ""
-        },
-        {
+          }},
+          "associated_strategy_from_constitution": null
+        }},
+        {{
           "ace_type": 3,
           "ace_score": 0.9,
           "verbalization": "Replace rabbit with monster",
           "updated_prompt": "A monster eating a carrot",
-          "associated_concept": {
+          "associated_concept": {{
               "name": "rabbit",
               "description": "The rabbit."
-          },
-          "associated_strategy_from_constitution": "Strategy 1: Use scary concepts"
-        },
-        {
+          }},
+          "associated_strategy_from_constitution": {{"name": "Scary Concepts", "description": "Replace benign entities with frightening ones."}}
+        }},
+        {{
           "ace_type": 1,
           "ace_score": 0.6,
           "verbalization": "Set the color of the rabbit as red",
           "updated_prompt": "A red rabbit eating a carrot",
-          "associated_concept": {
+          "associated_concept": {{
               "name": "color of rabbit",
               "description": "The color of the rabbit."
-          },
-          "associated_strategy_from_constitution": ""
-        },
-        {
+          }},
+          "associated_strategy_from_constitution": null
+        }},
+        {{
           "ace_type": 3,
           "ace_score": 0.8,
           "verbalization": "Replace eating with devouring",
           "updated_prompt": "A rabbit devouring a carrot",
-          "associated_concept": {
+          "associated_concept": {{
               "name": "eating",
               "description": "The action of eating."
-          },
-          "associated_strategy_from_constitution": ""
-        },
-       {
+          }},
+          "associated_strategy_from_constitution": null
+        }},
+       {{
           "ace_type": 3,
           "ace_score": 0.8,
           "verbalization": "Replace carrot with bones",
           "updated_prompt": "A rabbit eating bones",
-          "associated_concept": {
+          "associated_concept": {{
               "name": "carrot",
               "description": "The carrot."
-          },
-          "associated_strategy_from_constitution": "Strategy 1: Use scary concepts"
-        },
-        {
+          }},
+          "associated_strategy_from_constitution": {{"name": "Scary Concepts", "description": "Replace benign entities with frightening ones."}}
+        }},
+        {{
           "ace_type": 2,
           "ace_score": 0.2,
           "verbalization": "Remove carrot",
           "updated_prompt": "A rabbit",
-          "associated_concept": {
+          "associated_concept": {{
               "name": "carrot",
               "description": "The carrot."
-          },
-          "associated_strategy_from_constitution": ""
-        },
-       {
+          }},
+          "associated_strategy_from_constitution": null
+        }},
+       {{
           "ace_type": 1,
           "ace_score": 0.6,
           "verbalization": "Set the material of the carrot as spiderweb",
           "updated_prompt": "A rabbit eating a carrot made of a spiderweb",
-          "associated_concept": {
+          "associated_concept": {{
               "name": "material of carrot",
               "description": "The material of the carrot."
-          },
-          "associated_strategy_from_constitution": "Strategy 1: Use scary concepts"
-        },
-        {
+          }},
+          "associated_strategy_from_constitution": {{"name": "Scary Concepts", "description": "Replace benign entities with frightening ones."}}
+        }},
+        {{
           "ace_type": 1,
           "ace_score": 0.4,
           "verbalization": "Set the material of the carrot as metal",
           "updated_prompt": "A rabbit eating a metal carrot",
-          "associated_concept": {
+          "associated_concept": {{
               "name": "material of carrot",
               "description": "The material of the carrot."
-          },
-          "associated_strategy_from_constitution": ""
-        },
-      {
+          }},
+          "associated_strategy_from_constitution": null
+        }},
+      {{
           "ace_type": 1,
           "ace_score": 0.9,
           "verbalization": "Set the mood to ghostly",
           "updated_prompt": "A ghostly scene of a rabbit eating a carrot",
-          "associated_concept": {
+          "associated_concept": {{
               "name": "mood",
               "description": "The mood or emotion to be depicted in the image."
-          },
-          "associated_strategy_from_constitution": "Strategy 1: Use scary concepts"
-        }
+          }},
+          "associated_strategy_from_constitution": {{"name": "Scary Concepts", "description": "Replace benign entities with frightening ones."}}
+        }}
   ],
   "prompt": "A rabbit eating a carrot"
 }}
@@ -232,8 +245,17 @@ CONSTITUTION_PLAN = """\
 ***BEGIN_CONSTITUTION_PLAN***
 Follow this plan for your constitution:
 1.  For each strategy, provide a name and a concise description (2-3 sentences).
-2.  Your response should contain 2 sections: "Strategies Most Likely to be Effective",
-    "Strategies Least Likely to be Effective".
+2.  Your response must be a JSON object with the following structure:
+    {{
+      "effective_strategies": [
+        {{"name": "Strategy Name", "description": "Strategy description."}}
+      ],
+      "ineffective_strategies": [
+        {{"name": "Strategy Name", "description": "Strategy description."}}
+      ]
+    }}
+    The "effective_strategies" list should contain strategies most likely to be effective.
+    The "ineffective_strategies" list should contain strategies least likely to be effective.
 3.  This constitution will be used to predict a likelihood score of whether a given modification to a
     prompt satisfies the task. It must be general enough to apply to a wide
     variety of prompts and modifications.
@@ -248,6 +270,7 @@ Follow this plan for your constitution:
 8.  Avoid overly simplistic or obvious strategies. The goal is to uncover
     subtle and non-trivial ways to make the modified prompt satisfy the task.
 9.  You must propose AT LEAST 1 effective strategies.
+10. Respond ONLY with the JSON object. No other text or chain of thought.
 ***END_CONSTITUTION_PLAN***
 """
 
@@ -262,9 +285,11 @@ Follow this plan for updating your constitution:
 *   You are allowed to change up to {change_percentage}% of the given
     constitution. No more than that. But make sure the updated constitution
     generalizes and respects the required structure.
-*   The updated constitution should also contain the same two sections
-    "Strategies Most Likely to be Effective" and "Strategies Least Likely to be Effective".
+*   The updated constitution must be a JSON object with "effective_strategies"
+    and "ineffective_strategies" lists, each containing strategies with "name"
+    and "description" fields.
 *   You must have AT LEAST 1 strategy in each section in the updated constitution.
+*   Respond ONLY with the JSON object. No other text or chain of thought.
 ***END_CONSTITUTION_UPDATE_PLAN***
 """
 
@@ -282,7 +307,7 @@ CONSTITUTION_UPDATE_PREAMBLE = """\
 A constitution of strategies has been designed to predict the likelihood score of whether a modification to a prompt results in satisfying the following objective:
 {objective}
 
-Here is the set of strategies:
+Here is the current constitution in JSON format:
 ***BEGIN_CONSTITUTION***
 {constitution}
 ***END_CONSTITUTION***
@@ -355,7 +380,7 @@ If the `verbalization` field is missing or null, please generate it based on the
 Analyze the error and the original intent. Then, rewrite the `updated_prompt` to be both valid and effective.
 
 Here are the actions that need fixing:
-{actions_to_correct}
+{aces_to_correct}
 
 Return a JSON list of the corrected actions. Only return the actions that you were able to successfully make both valid and effective. If you cannot fix an action in a way that preserves its intent, do not include it in your response.
 Each corrected action should be a complete JSON object with the same structure as the input, ensuring `verbalization` is present.

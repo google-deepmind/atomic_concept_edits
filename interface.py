@@ -34,6 +34,7 @@ PARENT_ID_COLUMN = 'parent_id'
 PARENT_PROMPT_COLUMN = 'parent_prompt'
 ACE_VERBALIZATION_COLUMN = 'ace_verbalization'
 ACE_SCORE_COLUMN = 'ace_score'
+ACE_CONSTITUTION_STRATEGY_COLUMN = 'ace_constitution_strategy'
 ROOT_PROMPT_COLUMN = 'root_prompt'
 ROOT_ID_COLUMN = 'root_id'
 TARGET_MODEL_RESPONSES_COLUMN = 'target_model_responses'
@@ -52,6 +53,7 @@ class Model(abc.ABC):
       load_response: bool = True,
       num_responses: int = 1,
       save_path: str | None = None,
+      include_thoughts: bool = False,
   ) -> Content:
     """Generates response from the target model."""
     raise NotImplementedError()

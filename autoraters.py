@@ -167,6 +167,13 @@ LLM_AUTORATER_TEMPLATES = {
 }
 
 
+class LLMAutoraterTaskType:
+  """Task types for the LLM autorater."""
+
+  VQA = 'vqa'
+  CUSTOM = 'custom'
+
+
 @dataclasses.dataclass
 class WordCountAutoraterConfig(interface.AutoraterConfig):
   """Configuration for word count autorater."""
@@ -184,6 +191,7 @@ class LLMAutoraterConfig(interface.AutoraterConfig):
 
   llm_config: interface.ModelConfig
   autorater_task_type: str
+  system_instruction: str = ''
   use_logits: bool = False
 
   def build_autorater(self) -> interface.Autorater:
@@ -248,24 +256,33 @@ class LLMAutorater(interface.Autorater):
     if response is None:
       raise ValueError('No response or valid response_path provided.')
 
-    autorater_prompt_parts = []
-
     if isinstance(response, str):
-      autorater_prompt_parts.append(response)
+      response_text = response
     else:
-      raise ValueError(f'Unsupported response for autorater: {response}')
+      response_text = str(response) if response is not None else ''
 
-    if prompt is not None:
-      if isinstance(prompt, str):
-        autorater_prompt_parts.append(
-            LLM_AUTORATER_TEMPLATES[self.config.autorater_task_type].format(
-                prompt=prompt
-            )
+    if self.config.autorater_task_type == LLMAutoraterTaskType.CUSTOM:
+      template = self.config.system_instruction
+      if prompt is not None:
+        formatted_si = template.format(
+            prompt=str(prompt), response=response_text
         )
       else:
-        raise ValueError('We only support text prompts for LLM autoraters.')
+        formatted_si = template.format(response=response_text)
+      autorater_prompt = formatted_si
+    else:
+      autorater_prompt_parts = [response_text]
+      if prompt is not None:
+        if isinstance(prompt, str):
+          autorater_prompt_parts.append(
+              LLM_AUTORATER_TEMPLATES[self.config.autorater_task_type].format(
+                  prompt=prompt
+              )
+          )
+        else:
+          raise ValueError('We only support text prompts for LLM autoraters.')
+      autorater_prompt = '\n'.join(autorater_prompt_parts)
 
-    autorater_prompt = '\n'.join(autorater_prompt_parts)
     result = self.llm.generate(autorater_prompt)
     if not isinstance(result, str):
       result = str(result)

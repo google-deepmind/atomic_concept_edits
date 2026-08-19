@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 import pydantic
 
+from . import constitution_class
 from . import interface
 from . import prompts
 from .util import eval as eval_util
@@ -33,6 +34,8 @@ from .util import parallel_util
 
 
 MAX_LOSS = 10000
+_MIN_BATCH_SIZE = 50
+_IDEAL_NUM_CANDIDATES = 3
 
 
 @dataclasses.dataclass
@@ -60,14 +63,15 @@ class ConstitutionOptimizerConfig:
   engine_llm_config: interface.ModelConfig
   save_path: str = '/tmp/ace/'
   epochs: int = 10
-  batch_size: int = 10
+  batch_size: int | None = None
   objective_satisfied_column: str = 'objective_satisfied'
   objective_satisfied_score_column: str = 'objective_satisfied_score'
-  initial_constitution: str | None = None
+  initial_constitution: constitution_class.Constitution | None = None
   initial_num_strategies: int = 5
   final_num_strategies: int = 10
   initial_change_percentage: float = 100
   final_change_percentage: float = 10
+  max_parallelism: int = interface.MAX_PARALLELISM
 
 
 class FloatResponse(pydantic.BaseModel):
@@ -81,15 +85,7 @@ class ConstitutionOptimizer:
     """Initializes the constitution optimizer."""
     self.config = config
     self.engine_llm = config.engine_llm_config.build_model()
-    constitution_run_dir = (
-        f'label_column={config.objective_satisfied_column},'
-        f'constitution_epochs={config.epochs},'
-        f'batch_size={config.batch_size},'
-        f'initial_num_strategies={config.initial_num_strategies},'
-        f'final_num_strategies={config.final_num_strategies},'
-        f'initial_change_percentage={config.initial_change_percentage},'
-        f'final_change_percentage={config.final_change_percentage}'
-    )
+    constitution_run_dir = self._get_save_dir_name()
     constitution_save_path = os.path.join(
         config.save_path, config.run_id, 'constitution', constitution_run_dir
     )
@@ -100,6 +96,71 @@ class ConstitutionOptimizer:
     self.train_data, self.val_data, self.test_data = (
         self.get_train_test_val_data()
     )
+
+    if config.batch_size is None:
+      # Auto-determine batch size based on training data size.
+      self.config = dataclasses.replace(
+          self.config,
+          batch_size=self._determine_batch_size(len(self.train_data)),
+      )
+      print(
+          f'Auto-determined batch_size={self.config.batch_size}'
+          f' from {len(self.train_data)} training examples.',
+      )
+
+  def _get_save_dir_name(self) -> str:
+    """Returns the directory name for constitution checkpoint saves."""
+    return self._get_run_config_str()
+
+  def _get_run_config_str(self) -> str:
+    """Returns a string describing the run configuration."""
+    return (
+        f'label_column={self.config.objective_satisfied_column},'
+        f'constitution_epochs={self.config.epochs},'
+        f'batch_size={self.config.batch_size},'
+        f'initial_num_strategies={self.config.initial_num_strategies},'
+        f'final_num_strategies={self.config.final_num_strategies},'
+        f'initial_change_percentage={self.config.initial_change_percentage},'
+        f'final_change_percentage={self.config.final_change_percentage}'
+    )
+
+  def _determine_batch_size(self, num_train_examples: int) -> int:
+    """Determines the batch size based on the number of training examples.
+
+    The goal is to have at least `_IDEAL_NUM_CANDIDATES` (3) candidate
+    constitutions, each built from a batch of at least `_MIN_BATCH_SIZE` (50)
+    examples. When the training data is too small, the method gracefully
+    degrades:
+      1. If there aren't enough examples for 3 candidates at batch_size=50,
+         reduce the number of candidates (minimum 1).
+      2. If even a single candidate can't fill 50 examples, use all available
+         data as one batch.
+
+    Args:
+      num_train_examples: The total number of training examples.
+
+    Returns:
+      The computed batch size (>= 1).
+    """
+    if num_train_examples == 0:
+      return 1
+
+    for num_candidates in range(_IDEAL_NUM_CANDIDATES, 0, -1):
+      if num_train_examples >= _MIN_BATCH_SIZE * num_candidates:
+        batch_size = num_train_examples // num_candidates
+        print(
+            f'Using {num_candidates} candidate(s) with'
+            f' batch_size={batch_size} from {num_train_examples}'
+            ' training examples.',
+        )
+        return batch_size
+
+    print(
+        f'Training data ({num_train_examples} examples) is smaller than'
+        f' the minimum batch size ({_MIN_BATCH_SIZE}).'
+        ' Using all data as a single batch.',
+    )
+    return num_train_examples
 
   def get_train_test_val_data(
       self,
@@ -195,6 +256,14 @@ Action: {row['ace_verbalization']}
         f'Total examples: {len(reward_dataset)}'
     )
 
+    # Store balancing stats for reporting.
+    self.num_satisfied = select_count
+    self.num_partially_satisfied = min(
+        len(objective_partially_satisfied_data), select_count // 2
+    )
+    self.num_unsatisfied = select_count // 2
+    self.num_candidate_constitutions = 1
+
     random.shuffle(reward_dataset)
     train_data = reward_dataset[: int(len(reward_dataset) * 0.8)]
     val_data = reward_dataset[
@@ -218,8 +287,8 @@ Action: {row['ace_verbalization']}
 
   def save_checkpoint(
       self,
-      latest_constitution: str,
-      best_constitution_on_test_set: str,
+      latest_constitution: constitution_class.Constitution,
+      best_constitution_on_test_set: constitution_class.Constitution,
       current_epoch: int,
       train_data_with_results: list[dict[str, Any]],
       val_data_with_results: list[dict[str, Any]],
@@ -232,8 +301,10 @@ Action: {row['ace_verbalization']}
     io_util.write_json_to_file(
         f'{self.constitution_save_path}/constitution.json',
         {
-            'best_constitution_on_test_set': best_constitution_on_test_set,
-            'latest_constitution': latest_constitution,
+            'best_constitution_on_test_set': (
+                best_constitution_on_test_set.to_json()
+            ),
+            'latest_constitution': latest_constitution.to_json(),
             'epoch': current_epoch,
         },
     )
@@ -276,8 +347,14 @@ Action: {row['ace_verbalization']}
     if os.path.exists(constitution_path):
       print(f'Loading saved constitution from {constitution_path}')
       data = io_util.read_json_from_file(constitution_path)
-      best_constitution_on_test_set = data['best_constitution_on_test_set']
-      latest_constitution = data['latest_constitution']
+      best_constitution_on_test_set = (
+          constitution_class.Constitution.load_from_json(
+              data['best_constitution_on_test_set']
+          )
+      )
+      latest_constitution = constitution_class.Constitution.load_from_json(
+          data['latest_constitution']
+      )
       current_epoch = data['epoch'] + 1
       if os.path.exists(
           f'{self.constitution_save_path}/train_data_with_results.json'
@@ -312,7 +389,9 @@ Action: {row['ace_verbalization']}
         all_test_losses,
     )
 
-  def extract_initial_constitution(self, dataset: list[dict[str, Any]]) -> str:
+  def extract_initial_constitution(
+      self, dataset: list[dict[str, Any]]
+  ) -> constitution_class.Constitution:
     """Extract the constitution from the LLM."""
     examples = [
         f'{e["example_desc_for_llm"]}\n'
@@ -330,7 +409,9 @@ Study the provided examples to propose a constitution of strategies.
 
 {prompts.CONSTITUTION_PLAN.format(num_strategies=self.config.initial_num_strategies)}
 """
-    constitution = self.engine_llm.generate(llm_prompt)
+    constitution = self.engine_llm.generate_object(
+        llm_prompt, cls=constitution_class.Constitution
+    )
     return constitution
 
   def compute_loss(
@@ -352,16 +433,16 @@ Study the provided examples to propose a constitution of strategies.
 
   def update_constitution_with_surrogate_feedback(
       self,
-      constitution: str,
+      constitution: constitution_class.Constitution,
       data_with_results: list[dict[str, Any]],
       current_epoch: int,
       current_num_strategies: int,
       current_change_percentage: float,
-  ) -> str:
+  ) -> constitution_class.Constitution:
     """Update the constitution using LLM."""
     preamble = prompts.CONSTITUTION_UPDATE_PREAMBLE.format(
         objective=self.config.objective,
-        constitution=constitution,
+        constitution=json.dumps(constitution.to_json(), indent=2),
     )
     satisfied_key = f'satisfied_pred_{current_epoch}'
     failed_examples = [
@@ -396,7 +477,9 @@ Respond only with the updated constitution, nothing else. No other text or chain
   {output_plan}
   """
     try:
-      response = self.engine_llm.generate(llm_prompt)
+      response = self.engine_llm.generate_object(
+          llm_prompt, cls=constitution_class.Constitution
+      )
     except Exception as e:  # pylint: disable=broad-except
       print(f'Error generating updated constitution: {e}')
       response = constitution
@@ -405,18 +488,23 @@ Respond only with the updated constitution, nothing else. No other text or chain
     return updated_constitution
 
   def evaluate_example_on_surrogate_classifier(
-      self, example: dict[str, Any], constitution: str, current_epoch: int
+      self,
+      example: dict[str, Any],
+      constitution: constitution_class.Constitution,
+      current_epoch: int,
   ) -> dict[str, Any]:
     """Evaluate the examples with the constitution."""
 
     task = prompts.SURROGATE_CLASSIFIER_TASK.format(
         objective=self.config.objective,
-        constitution=constitution,
+        constitution=constitution.to_string(),
         example=example['example_desc_for_llm'],
     )
     satisfied_pred = None
     try:
-      response = self.engine_llm.generate_object(task, FloatResponse)
+      response: FloatResponse = self.engine_llm.generate_object(
+          task, FloatResponse
+      )
       satisfied_pred = response.value
     except Exception as e:  # pylint: disable=broad-except
       print(f'Failed to predict or parse satisfied_pred: {satisfied_pred}')
@@ -429,7 +517,7 @@ Respond only with the updated constitution, nothing else. No other text or chain
   def evaluate_candidate_constitutions_as_surrogate_classifiers(
       self,
       data_with_results: list[dict[str, Any]],
-      candidate_constitutions: list[str],
+      candidate_constitutions: list[constitution_class.Constitution],
       current_epoch: int,
   ) -> tuple[list[list[dict[str, Any]]], list[float]]:
     """Evaluate the candidate constitutes as a surrogate classifier."""
@@ -437,7 +525,7 @@ Respond only with the updated constitution, nothing else. No other text or chain
     for candidate_constitution in candidate_constitutions:
       for example in data_with_results:
         list_of_kwargs_to_function.append({
-            'example': example,
+            'example': example.copy(),
             'constitution': candidate_constitution,
             'current_epoch': current_epoch,
         })
@@ -450,17 +538,18 @@ Respond only with the updated constitution, nothing else. No other text or chain
     )
     candidate_data_with_results = []
     candidate_losses = []
+    num_examples = len(data_with_results)
     for i in range(len(candidate_constitutions)):
-      data_with_results = results[
-          i * len(data_with_results) : (i + 1) * len(data_with_results)
+      data_with_results_slice = results[
+          i * num_examples : (i + 1) * num_examples
       ]
-      candidate_data_with_results.append(data_with_results)
+      candidate_data_with_results.append(data_with_results_slice)
       candidate_losses.append(
-          self.compute_loss(data_with_results, current_epoch)
+          self.compute_loss(data_with_results_slice, current_epoch)
       )
     return candidate_data_with_results, candidate_losses
 
-  def run_optimizer(self) -> str:
+  def run_optimizer(self) -> constitution_class.Constitution:
     """Run the constitution optimizer."""
     (
         latest_constitution,
@@ -494,6 +583,9 @@ Respond only with the updated constitution, nothing else. No other text or chain
         )
 
     candidate_constitutions = [latest_constitution]
+    self.num_candidate_constitutions = (
+        len(train_data_with_results) // self.config.batch_size
+    )
 
     for epoch in range(current_epoch, self.config.epochs):
       epoch_num_strategies = eval_util.get_current_decay_value(
@@ -539,7 +631,7 @@ Respond only with the updated constitution, nothing else. No other text or chain
                 )
             ],
             num_workers=min(
-                interface.MAX_PARALLELISM,
+                self.config.max_parallelism,
                 (len(train_data_with_results) // self.config.batch_size) + 1,
             ),
         )

@@ -20,6 +20,8 @@ from typing import Any
 
 import pydantic
 
+from . import constitution_class
+
 
 class Concept(pydantic.BaseModel):
   """An entity, attribute, relation, or idea in a prompt.
@@ -83,7 +85,9 @@ class ACE(pydantic.BaseModel):
   updated_prompt: str
   ace_score: float
   associated_concept: Concept | None = None
-  associated_strategy_from_constitution: str | None = None
+  associated_strategy_from_constitution: constitution_class.Strategy | None = (
+      None
+  )
 
   def __str__(self):
     return_string = ''
@@ -91,10 +95,12 @@ class ACE(pydantic.BaseModel):
     return_string += f'ACE Verbalization: {self.verbalization}\n'
     return_string += f'Updated Prompt: {self.updated_prompt}\n'
     return_string += f'ACE Score: {self.ace_score}\n'
-    return_string += (
-        'Associated Strategy from Constitution:'
-        f' {self.associated_strategy_from_constitution}\n'
+    strategy_str = (
+        str(self.associated_strategy_from_constitution)
+        if self.associated_strategy_from_constitution
+        else None
     )
+    return_string += f'Associated Strategy from Constitution: {strategy_str}\n'
     return return_string.strip()
 
   def to_json(self) -> dict[str, Any]:

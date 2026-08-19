@@ -18,7 +18,7 @@
 import dataclasses
 import enum
 import os
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import pandas as pd
 
@@ -33,6 +33,7 @@ class AutoraterScoreSelectionMethod(enum.Enum):
 
   ANY = 'any'
   ALL = 'all'
+  CUSTOM = 'custom'
 
 
 def get_current_decay_value(
@@ -63,10 +64,13 @@ def get_current_decay_value(
 
 
 def is_objective_satisfied(
-    autorater_scores: list[float],
+    autorater_scores: list[float | None],
     min_score: float,
     max_score: float,
     selection_method: AutoraterScoreSelectionMethod = AutoraterScoreSelectionMethod.ANY,
+    custom_selection_fn: (
+        Callable[[list[float | None], float, float], bool] | None
+    ) = None,
 ) -> bool:
   """Checks if the objective is satisfied by the autorater scores.
 
@@ -74,7 +78,12 @@ def is_objective_satisfied(
     autorater_scores: The list of autorater scores.
     min_score: The minimum score.
     max_score: The maximum score.
-    selection_method: The selection method to use for checking the scores.
+    selection_method: The selection method to use for checking the scores. ANY -
+      Check if any of the scores is within the range. ALL - Check if all of the
+      scores are within the range. CUSTOM - Use the provided
+      custom_selection_fn.
+    custom_selection_fn: A custom function to check if the objective is
+      satisfied.
 
   Returns:
     True if the objective is satisfied, False otherwise.
@@ -83,14 +92,56 @@ def is_objective_satisfied(
     return False
   if selection_method == AutoraterScoreSelectionMethod.ANY:
     for score in autorater_scores:
-      if score >= min_score and score <= max_score:
+      if score is not None and (score >= min_score and score <= max_score):
         return True
     return False
-  else:
+  elif selection_method == AutoraterScoreSelectionMethod.ALL:
+    if all(score is None for score in autorater_scores):
+      return False
     for score in autorater_scores:
-      if score < min_score or score > max_score:
+      if score is not None and (score < min_score or score > max_score):
         return False
     return True
+  elif selection_method == AutoraterScoreSelectionMethod.CUSTOM:
+    if custom_selection_fn is None:
+      raise ValueError(
+          'custom_selection_fn must be provided if selection_method is CUSTOM'
+      )
+    return custom_selection_fn(autorater_scores, min_score, max_score)
+
+  return False
+
+
+def mark_terminal_nodes_by_trajectory(
+    exploration_data: pd.DataFrame,
+    objective_satisfied_column: str = 'objective_satisfied',
+) -> pd.DataFrame:
+  """Marks terminal nodes in each trajectory.
+
+  Ensures that if a node is successful, all its children are marked as
+  NA to mark the end of that exploration trajectory.
+
+  Args:
+    exploration_data: The exploration data.
+    objective_satisfied_column: The column to use for checking the objective
+      satisfied.
+
+  Returns:
+    The exploration data with the objective satisfied column relabeled to mark
+    terminal nodes in each trajectory.
+  """
+  for depth in range(max(exploration_data['depth'])):
+    for _, row in exploration_data[
+        exploration_data['depth'] == depth
+    ].iterrows():
+      if pd.isna(row[objective_satisfied_column]) or (
+          row[objective_satisfied_column] == True  # pylint: disable=singleton-comparison
+      ):
+        exploration_data.loc[
+            exploration_data['parent_id'] == row['prompt_id'],
+            objective_satisfied_column,
+        ] = None
+  return exploration_data
 
 
 def generate_target_model_response(
@@ -126,10 +177,10 @@ def generate_autorater_scores(
 
   kwargs_list = []
   for i in range(num_responses_per_prompt):
-    if num_responses_per_prompt > 1 and responses is not None:
-      response = responses[i]
+    if responses is not None:
+      response = responses[i] if isinstance(responses, list) else responses
     else:
-      response = responses
+      response = None
     response_path = None if response_paths is None else response_paths[i]
     kwargs_list.append({
         'prompt': prompt,
@@ -176,10 +227,10 @@ def score_all_nodes(
   Returns:
     The exploration data with the objective satisfied score column.
   """
-  max_depth = max(exploration_data['depth']) + 1
+  max_depth = max(exploration_data['depth'])
   objective_satisfied_score_column = f'{objective_satisfied_column}_score'
   exploration_data[objective_satisfied_score_column] = None
-  for depth in range(max_depth - 1, -1, -1):
+  for depth in range(max_depth, -1, -1):
     print(f'Scoring all nodes at depth: {depth}')
     for _, row in exploration_data[
         exploration_data['depth'] == depth
@@ -194,7 +245,7 @@ def score_all_nodes(
         )
       else:
         if pd.isna(row[objective_satisfied_column]):
-          objective_satisfied_score = 1
+          objective_satisfied_score = None
         else:
           objective_satisfied_score = int(row[objective_satisfied_column])
       exploration_data.loc[
@@ -213,6 +264,9 @@ class Metrics:
   success_rate_among_root_prompts: float = 0.0
   success_rate_among_unsuccessful_root_prompts: float = 0.0
   success_rate_at_depth: dict[int, float] = dataclasses.field(
+      default_factory=dict
+  )
+  cumulative_success_rate_at_depth: dict[int, float] = dataclasses.field(
       default_factory=dict
   )
 
@@ -249,22 +303,29 @@ def compute_metrics(
   root_prompts = exploration_data[exploration_data['depth'] == 0]['root_id']
   unsuccessful_root_prompts = exploration_data[
       (exploration_data['depth'] == 0)
-      & (exploration_data[objective_satisfied_column] == False)  # pylint: disable=singleton-comparison
+      & (exploration_data[objective_satisfied_column].ne(True))
   ]['root_id']
 
+  success_mask_all = exploration_data[objective_satisfied_column].eq(True)
   led_to_success = exploration_data[
-      exploration_data['root_id'].isin(root_prompts)
-      & (exploration_data[objective_satisfied_column] == True)  # pylint: disable=singleton-comparison
+      exploration_data['root_id'].isin(root_prompts) & success_mask_all
   ]
   led_to_success_from_unsuccessful = exploration_data[
       exploration_data['root_id'].isin(unsuccessful_root_prompts)
-      & (exploration_data[objective_satisfied_column] == True)  # pylint: disable=singleton-comparison
+      & success_mask_all
   ]
 
-  ace_success_rate = len(led_to_success.root_id.unique()) / len(root_prompts)
-  ace_unsuccessful_success_rate = len(
-      led_to_success_from_unsuccessful.root_id.unique()
-  ) / len(unsuccessful_root_prompts)
+  ace_success_rate = (
+      len(led_to_success.root_id.unique()) / len(root_prompts)
+      if len(root_prompts) > 0
+      else 0.0
+  )
+  if len(unsuccessful_root_prompts) > 0:
+    ace_unsuccessful_success_rate = len(
+        led_to_success_from_unsuccessful.root_id.unique()
+    ) / len(unsuccessful_root_prompts)
+  else:
+    ace_unsuccessful_success_rate = 0.0
 
   print(f'Success rate of ACE among root prompts: {ace_success_rate}')
   print(
@@ -272,23 +333,43 @@ def compute_metrics(
       f' unsuccessful: {ace_unsuccessful_success_rate}'
   )
 
+  cumulative_depth_success_rates = {}
   depth_success_rates = {}
   for depth in range(len(sample_size_at_depth)):
     successful_at_depth = led_to_success[
         led_to_success['depth'] == depth
     ].root_id.unique()
-    rate = len(successful_at_depth) / len(root_prompts)
+    rate = (
+        len(successful_at_depth) / len(root_prompts)
+        if len(root_prompts) > 0
+        else 0.0
+    )
     depth_success_rates[depth] = rate
     print(f'Success rate of ACE at depth {depth}: {rate}')
+
+    successful_up_to_depth = led_to_success[
+        led_to_success['depth'] <= depth
+    ].root_id.unique()
+    if len(root_prompts) > 0:
+      cum_rate = len(successful_up_to_depth) / len(root_prompts)
+    else:
+      cum_rate = 0.0
+    cumulative_depth_success_rates[depth] = cum_rate
+    print(f'Cumulative success rate of ACE at depth {depth}: {cum_rate}')
 
   metrics = Metrics(
       total_leaves=len(all_leaves),
       successful_leaves=len(successful_leaves),
-      success_rate_among_leaves=len(successful_leaves) / len(all_leaves),
+      success_rate_among_leaves=(
+          len(successful_leaves) / len(all_leaves)
+          if len(all_leaves) > 0
+          else 0.0
+      ),
       root_prompts=len(root_prompts),
       success_rate_among_root_prompts=ace_success_rate,
       success_rate_among_unsuccessful_root_prompts=ace_unsuccessful_success_rate,
       success_rate_at_depth=depth_success_rates,
+      cumulative_success_rate_at_depth=cumulative_depth_success_rates,
   )
 
   if save_metrics_path is not None:

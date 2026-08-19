@@ -20,6 +20,7 @@ import glob
 import json
 import os
 import random
+from typing import Callable
 
 import pandas as pd
 
@@ -55,6 +56,11 @@ class ACEExplorationConfig:
     objective successful.
   score_selection_method: The autorater score selection method to use when
     num_responses_per_prompt > 1.
+  custom_score_selection_fn: A custom function to use for score selection when
+    score_selection_method ==
+    eval_util.AutoraterScoreSelectionMethod.CUSTOM. Given a sequence of
+    autorater scores for a given prompt and the min and max scores,
+    return a boolean indicating whether the prompt should be selected.
   max_parallelism_target_model: The max number of parallel sampling calls to
     make for target model.
   max_parallelism_autorater: The max number of parallel sampling calls to make
@@ -87,6 +93,9 @@ class ACEExplorationConfig:
   score_selection_method: eval_util.AutoraterScoreSelectionMethod = (
       eval_util.AutoraterScoreSelectionMethod.ANY
   )
+  custom_score_selection_fn: (
+      Callable[[list[float | None], float, float], bool] | None
+  ) = None
   max_parallelism_target_model: int = interface.MAX_PARALLELISM
   max_parallelism_autorater: int = interface.MAX_PARALLELISM
   max_parallelism_ace_generation: int = interface.MAX_PARALLELISM
@@ -99,6 +108,8 @@ class ACEExplorationConfig:
   )
   autorater_scores_column: str = interface.AUTORATER_SCORES_COLUMN
   objective_satisfied_column: str = interface.OBJECTIVE_SATISFIED_COLUMN
+  stop_exploration_on_first_success: bool = False
+  stop_exploration_on_successful_trajectories: bool = True
 
 
 class ACEExploration:
@@ -152,6 +163,7 @@ class ACEExploration:
         interface.PARENT_PROMPT_COLUMN: 'string',
         interface.ACE_VERBALIZATION_COLUMN: 'string',
         interface.ACE_SCORE_COLUMN: 'Float64',
+        interface.ACE_CONSTITUTION_STRATEGY_COLUMN: 'string',
         interface.ROOT_PROMPT_COLUMN: 'string',
         interface.ROOT_ID_COLUMN: 'string',
         config.target_model_responses_column: 'string',
@@ -208,6 +220,18 @@ class ACEExploration:
     rows = self.exploration_data[
         self.exploration_data[interface.DEPTH_COLUMN] == depth
     ]
+    print(f'Found {len(rows)} rows at depth {depth}.')
+    if self._config.stop_exploration_on_first_success:
+      # If early stopping is enabled, only consider rows whose root has not
+      # yet produced a successful node.
+      successful_root_ids = self._get_successful_root_ids()
+      rows = rows[~rows[interface.ROOT_ID_COLUMN].isin(successful_root_ids)]
+      print(
+          'stop_exploration_on_first_success is enabled. '
+          f'Found {len(successful_root_ids)} successful root IDs. '
+          f'Returning {len(rows)} nodes for depth {depth}.'
+      )
+
     nodes = []
     for _, row in rows.iterrows():
       parent_row = self.exploration_data[
@@ -236,6 +260,13 @@ class ACEExploration:
           )
       )
     return nodes
+
+  def _get_successful_root_ids(self) -> list[str]:
+    """Returns root IDs that have at least one successful node."""
+    successful_rows = self.exploration_data[
+        self.exploration_data[self._config.objective_satisfied_column] == True  # pylint: disable=singleton-comparison
+    ]
+    return successful_rows[interface.ROOT_ID_COLUMN].dropna().unique().tolist()
 
   def _run_target_model(self, nodes: list[tree_util.PromptNode]):
     """Generates responses for nodes that are missing target model responses."""
@@ -383,6 +414,7 @@ class ACEExploration:
           min_score=self._config.min_score,
           max_score=self._config.max_score,
           selection_method=self._config.score_selection_method,
+          custom_selection_fn=self._config.custom_score_selection_fn,
       )
       self.exploration_data.loc[
           mask, self._config.objective_satisfied_column
@@ -446,6 +478,7 @@ class ACEExploration:
           min_score=self._config.min_score,
           max_score=self._config.max_score,
           selection_method=self._config.score_selection_method,
+          custom_selection_fn=self._config.custom_score_selection_fn,
       )
       self.exploration_data.loc[
           mask, self._config.objective_satisfied_column
@@ -460,13 +493,15 @@ class ACEExploration:
 
     nodes_to_explore = []
     for node in nodes:
-      row = self.exploration_data[
-          self.exploration_data[interface.PROMPT_ID_COLUMN] == node.prompt_id
-      ]
-      obj_val = row[self._config.objective_satisfied_column].values[0]
-      has_autorater = self.autorater is not None or self.scorer is not None
-      if has_autorater and (pd.isna(obj_val) or obj_val == True):  # pylint: disable=singleton-comparison
-        continue
+      if self._config.stop_exploration_on_successful_trajectories:
+        # Check if this node is already successful, if so skip it.
+        row = self.exploration_data[
+            self.exploration_data[interface.PROMPT_ID_COLUMN] == node.prompt_id
+        ]
+        obj_val = row[self._config.objective_satisfied_column].values[0]
+        has_autorater = self.autorater is not None or self.scorer is not None
+        if has_autorater and (pd.isna(obj_val) or obj_val == True):  # pylint: disable=singleton-comparison
+          continue
 
       existing_children = self.exploration_data[
           self.exploration_data[interface.PARENT_ID_COLUMN] == node.prompt_id
@@ -557,6 +592,7 @@ class ACEExploration:
           self._run_autorater(nodes_at_depth)
 
       if depth < self._exploration_depth:
+        nodes_at_depth = self._get_nodes_at_depth(depth)
         self._explore(nodes_at_depth, depth)
 
     if (

@@ -22,8 +22,18 @@ import threading
 from typing import Any, Callable, Union
 
 from . import ace_set_class
+from . import constitution_class
 from . import interface
 from . import prompts
+
+
+def _get_constitution_str(
+    constitution: constitution_class.Constitution | str | None,
+) -> str | None:
+  """Returns the string representation of the constitution."""
+  if isinstance(constitution, constitution_class.Constitution):
+    return constitution.to_string()
+  return constitution
 
 
 @dataclasses.dataclass
@@ -44,7 +54,7 @@ class ACEMutationSamplerConfig(interface.MutationSamplerConfig):
 
   llm_config: interface.ModelConfig
   objective: str
-  constitution: str | None = None
+  constitution: constitution_class.Constitution | str | None = None
   instruction_preamble: str = prompts.ACE_MUTATION_PREAMBLE
 
   def build_mutation_sampler(self) -> interface.MutationSampler:
@@ -59,7 +69,7 @@ class ACETwoStageMutationSamplerConfig(interface.MutationSamplerConfig):
   objective: str
   concept_extraction_preamble: str
   ace_generation_preamble: str
-  constitution: str | None = None
+  constitution: constitution_class.Constitution | str | None = None
 
   def build_mutation_sampler(self) -> interface.MutationSampler:
     return ACETwoStageMutationSampler(self)
@@ -131,7 +141,7 @@ class ACEMutationSampler(interface.MutationSampler):
         self.config.instruction_preamble
         + prompts.MUTATION_TASK_TEMPLATE.format(
             objective=self.config.objective,
-            constitution=self.config.constitution,
+            constitution=_get_constitution_str(self.config.constitution),
             prompt=prompt,
         )
     )
@@ -187,11 +197,13 @@ class ACETwoStageMutationSampler(ACEMutationSampler):
         self.concept_extraction_preamble
         + prompts.MUTATION_TASK_TEMPLATE.format(
             objective=self.config.objective,
-            constitution=self.config.constitution,
+            constitution=_get_constitution_str(self.config.constitution),
             prompt=prompt,
         )
     )
-    concept_set = self.llm.generate_object(llm_prompt, ace_set_class.ConceptSet)
+    concept_set: ace_set_class.ConceptSet = self.llm.generate_object(
+        llm_prompt, ace_set_class.ConceptSet
+    )
 
     print(f'    {len(concept_set.concepts)} concepts generated.')
 
@@ -204,7 +216,7 @@ class ACETwoStageMutationSampler(ACEMutationSampler):
             self.ace_generation_preamble
             + prompts.ACE_GENERATION_TASK_TEMPLATE.format(
                 objective=self.config.objective,
-                constitution=self.config.constitution,
+                constitution=_get_constitution_str(self.config.constitution),
                 prompt=prompt,
                 concept=concept.to_json(),
             )
@@ -299,9 +311,9 @@ class ACELoopMutationSampler(interface.MutationSampler):
       aces_to_correct_next_attempt = []
       try:
         corrected_aces_json = self.llm.generate_object(
-            corrector_prompt, ace_set_class.ACESet
+            corrector_prompt, list[ace_set_class.ACE]
         )
-        corrected_aces = {a.verbalization: a for a in corrected_aces_json.aces}
+        corrected_aces = {a.verbalization: a for a in corrected_aces_json}
         print(f'  LLM returned {len(corrected_aces)} corrected aces.')
 
         corrected_aces_to_validate = []
@@ -370,7 +382,7 @@ class ACELoopMutationSampler(interface.MutationSampler):
         self.config.instruction_preamble
         + prompts.MUTATION_TASK_TEMPLATE.format(
             objective=self.config.objective,
-            constitution=self.config.constitution,
+            constitution=_get_constitution_str(self.config.constitution),
             prompt=prompt,
         )
     )
@@ -393,7 +405,7 @@ class ACELoopMutationSampler(interface.MutationSampler):
       existing_aceset_json = json.dumps(initial_ace_set.to_json(), indent=2)
       expander_prompt = self.config.expander_preamble.format(
           objective=self.config.objective,
-          constitution=self.config.constitution,
+          constitution=_get_constitution_str(self.config.constitution),
           existing_aceset=existing_aceset_json,
       )
       try:
